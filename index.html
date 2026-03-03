@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>GRX AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--g:#00ff88;--glow:0 0 10px #00ff88,0 0 22px rgba(0,255,136,0.35)}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Share Tech Mono',monospace;color:var(--g)}
+
+/* ── FULLSCREEN CAMERA ── */
+#vid{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+#cvs{position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
+
+/* ── DARK VIGNETTE EDGES ── */
+#vignette{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,0.7) 100%)}
+
+/* ── GRID ── */
+#grid{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background-image:linear-gradient(rgba(0,255,136,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,0.03) 1px,transparent 1px);
+  background-size:44px 44px}
+
+/* ── SCAN LINE ── */
+#scan{position:fixed;left:0;right:0;height:2px;z-index:3;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--g) 40%,var(--g) 60%,transparent);
+  box-shadow:var(--glow);animation:scanY 4s linear infinite}
+@keyframes scanY{0%{top:-2px}100%{top:100vh}}
+
+/* ── CORNERS ── */
+.co{position:fixed;width:24px;height:24px;z-index:4;pointer-events:none;animation:coblink 2.2s ease-in-out infinite}
+@keyframes coblink{0%,100%{opacity:1}55%{opacity:0.25}}
+.co.tl{top:10px;left:10px;border-top:2px solid var(--g);border-left:2px solid var(--g)}
+.co.tr{top:10px;right:10px;border-top:2px solid var(--g);border-right:2px solid var(--g)}
+.co.bl{bottom:72px;left:10px;border-bottom:2px solid var(--g);border-left:2px solid var(--g)}
+.co.br{bottom:72px;right:10px;border-bottom:2px solid var(--g);border-right:2px solid var(--g)}
+
+/* ── CROSSHAIR ── */
+#xhair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;pointer-events:none;opacity:0.3}
+#xhair::before{content:'';position:absolute;top:-16px;left:0;width:1px;height:32px;background:var(--g)}
+#xhair::after{content:'';position:absolute;left:-16px;top:0;height:1px;width:32px;background:var(--g)}
+
+/* ══════════════════════════════════
+   TOP BAR  — very small, compact
+══════════════════════════════════ */
+#top{position:fixed;top:0;left:0;right:0;z-index:10;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 12px;
+  background:linear-gradient(to bottom,rgba(0,0,0,0.86) 0%,transparent 100%)}
+
+#logo{display:flex;align-items:baseline;gap:6px}
+#logo .name{font-family:'Orbitron',monospace;font-size:16px;font-weight:900;
+  letter-spacing:5px;color:var(--g);text-shadow:var(--glow);line-height:1}
+#logo .tag{font-size:7px;letter-spacing:3px;color:rgba(0,255,136,0.4)}
+
+#top-right{display:flex;align-items:center;gap:6px}
+.pill{display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;
+  font-size:7px;letter-spacing:2px;border:1px solid rgba(0,255,136,0.25);
+  background:rgba(0,0,0,0.65);color:var(--g)}
+.d{width:5px;height:5px;border-radius:50%;background:var(--g);animation:dp 1.5s infinite}
+.d.off{background:#ffdd00}
+@keyframes dp{0%,100%{opacity:1}50%{opacity:0.25}}
+#s-btn{width:28px;height:28px;border-radius:50%;border:1px solid rgba(0,255,136,0.35);
+  background:rgba(0,0,0,0.72);color:var(--g);font-size:13px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all 0.2s}
+#s-btn:active{background:rgba(0,255,136,0.2)}
+
+/* ══════════════════════════════════
+   DETECTION TAGS  — top overlay
+══════════════════════════════════ */
+#dtags{position:fixed;top:52px;left:12px;right:12px;z-index:8;
+  display:flex;flex-wrap:wrap;gap:5px;pointer-events:none;max-height:90px;overflow:hidden}
+.dtag{padding:3px 9px;border-radius:5px;background:rgba(0,0,0,0.8);
+  border:1px solid var(--g);font-size:9px;color:var(--g);letter-spacing:2px;
+  text-shadow:0 0 7px var(--g);box-shadow:0 0 5px rgba(0,255,136,0.25);
+  animation:tagin 0.25s ease;white-space:nowrap}
+@keyframes tagin{from{opacity:0;transform:scale(0.85)}to{opacity:1;transform:scale(1)}}
+
+/* ══════════════════════════════════
+   AI SPEECH BUBBLE  — center-left
+══════════════════════════════════ */
+#ai-bubble{position:fixed;left:12px;right:12px;bottom:155px;z-index:9;
+  pointer-events:none;display:none}
+#ai-bubble.show{display:block}
+.bubble-inner{background:rgba(0,0,0,0.82);border:1px solid rgba(0,255,136,0.5);
+  border-radius:12px 12px 12px 2px;padding:10px 14px;
+  box-shadow:0 0 16px rgba(0,255,136,0.15);animation:bubin 0.3s ease}
+@keyframes bubin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.bubble-name{font-size:8px;color:rgba(0,255,136,0.45);letter-spacing:3px;margin-bottom:4px}
+.bubble-text{font-size:12px;color:var(--g);line-height:1.75;text-shadow:0 0 6px rgba(0,255,136,0.3)}
+
+/* ══════════════════════════════════
+   USER BUBBLE  — right side
+══════════════════════════════════ */
+#user-bubble{position:fixed;left:60px;right:12px;bottom:205px;z-index:9;
+  pointer-events:none;display:none;text-align:right}
+#user-bubble.show{display:block}
+.ububble{background:rgba(0,0,0,0.78);border:1px solid rgba(0,229,255,0.45);
+  border-radius:12px 12px 2px 12px;padding:8px 12px;display:inline-block;
+  animation:bubin 0.25s ease;max-width:80%}
+.ububble .utx{font-size:11px;color:#00e5ff;line-height:1.7}
+
+/* ══════════════════════════════════
+   WAVEFORM  — above mic
+══════════════════════════════════ */
+#wave{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:3px;z-index:9;pointer-events:none;
+  opacity:0;transition:opacity 0.3s;height:38px}
+#wave.on{opacity:1}
+.wb{width:3px;border-radius:2px;background:var(--g);box-shadow:0 0 4px var(--g);height:4px;
+  animation:wi 1.8s ease-in-out infinite}
+.wb:nth-child(2n){animation-delay:0.18s}
+.wb:nth-child(3n){animation-delay:0.36s}
+@keyframes wi{0%,100%{height:3px}50%{height:10px}}
+.wb.a{animation:wa 0.22s ease-in-out infinite alternate}
+@keyframes wa{from{height:4px}to{height:32px}}
+
+/* ══════════════════════════════════
+   VOICE STATUS TEXT
+══════════════════════════════════ */
+#vstatus{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);
+  font-size:9px;letter-spacing:4px;color:rgba(0,255,136,0.5);z-index:9;
+  white-space:nowrap;pointer-events:none;text-shadow:0 0 7px rgba(0,255,136,0.3)}
+
+/* ══════════════════════════════════
+   BOTTOM BAR
+══════════════════════════════════ */
+#bot{position:fixed;bottom:0;left:0;right:0;z-index:10;
+  padding:8px 12px 18px;
+  background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,transparent 100%);
+  display:flex;align-items:center;gap:9px}
+
+/* CAM button */
+#cam-btn{width:40px;height:40px;border-radius:50%;border:1px solid rgba(0,255,136,0.35);
+  background:rgba(0,0,0,0.8);color:var(--g);font-size:17px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
+#cam-btn.on{border-color:var(--g);background:rgba(0,255,136,0.12);box-shadow:var(--glow)}
+
+/* MIC button */
+#mic-btn{width:58px;height:58px;border-radius:50%;border:2px solid var(--g);
+  background:rgba(0,0,0,0.82);color:var(--g);font-size:24px;cursor:pointer;
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  position:relative;transition:all 0.3s;box-shadow:0 0 14px rgba(0,255,136,0.28)}
+#mic-btn::before{content:'';position:absolute;inset:-7px;border-radius:50%;
+  border:1px solid rgba(0,255,136,0.18);animation:mring 2s ease infinite}
+@keyframes mring{0%{transform:scale(1);opacity:0.5}100%{transform:scale(1.45);opacity:0}}
+#mic-btn.on{background:rgba(0,255,136,0.22);border-color:#00ffaa;
+  animation:mpulse 0.75s ease infinite;box-shadow:0 0 28px rgba(0,255,136,0.7)}
+@keyframes mpulse{0%,100%{box-shadow:0 0 14px rgba(0,255,136,0.5)}50%{box-shadow:0 0 38px rgba(0,255,136,1)}}
+
+/* TEXT INPUT */
+#inp-wrap{flex:1;display:flex;gap:6px;align-items:center;
+  background:rgba(0,0,0,0.8);border:1px solid rgba(0,255,136,0.28);
+  border-radius:28px;padding:6px 6px 6px 14px}
+#inp{flex:1;background:none;border:none;outline:none;color:var(--g);
+  font-family:'Share Tech Mono',monospace;font-size:12px;caret-color:var(--g)}
+#inp::placeholder{color:rgba(0,255,136,0.25)}
+#snd{width:36px;height:36px;border-radius:50%;border:1px solid var(--g);
+  background:rgba(0,255,136,0.12);color:var(--g);font-size:16px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
+#snd:active{background:rgba(0,255,136,0.3)}
+
+/* THINKING dots */
+#thinking{position:fixed;left:12px;bottom:155px;z-index:9;pointer-events:none;display:none}
+#thinking.show{display:flex;gap:5px;align-items:center;padding:8px 14px;
+  background:rgba(0,0,0,0.8);border:1px solid rgba(0,255,136,0.25);border-radius:10px}
+.td{width:6px;height:6px;border-radius:50%;background:var(--g)}
+.td:nth-child(1){animation:tda 0.9s infinite 0s}
+.td:nth-child(2){animation:tda 0.9s infinite 0.2s}
+.td:nth-child(3){animation:tda 0.9s infinite 0.4s}
+@keyframes tda{0%,80%,100%{transform:scale(0.55);opacity:0.35}40%{transform:scale(1);opacity:1}}
+
+/* ══════════════════════════════════
+   SETTINGS MODAL
+══════════════════════════════════ */
+#smod{display:none;position:fixed;inset:0;z-index:100;
+  background:rgba(0,0,0,0.93);backdrop-filter:blur(12px);
+  align-items:center;justify-content:center;padding:16px}
+#smod.open{display:flex}
+#sbox{background:rgba(0,6,2,0.99);border:1px solid rgba(0,255,136,0.25);
+  border-radius:18px;padding:20px;width:100%;max-width:380px;
+  max-height:88vh;overflow-y:auto;scrollbar-width:none}
+#sbox::-webkit-scrollbar{display:none}
+.st{font-family:'Orbitron',monospace;font-size:14px;font-weight:900;
+  letter-spacing:5px;color:var(--g);margin-bottom:16px;text-align:center;
+  text-shadow:var(--glow)}
+.sr{margin-bottom:14px}
+.sl{font-size:8px;letter-spacing:3px;color:rgba(0,255,136,0.48);margin-bottom:6px;display:block}
+.si{width:100%;background:rgba(0,255,136,0.04);border:1px solid rgba(0,255,136,0.18);
+  border-radius:8px;padding:9px 12px;color:var(--g);font-family:'Share Tech Mono',monospace;
+  font-size:11px;outline:none}
+.si:focus{border-color:rgba(0,255,136,0.55)}
+.lg{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:7px}
+.lb{padding:7px 6px;border-radius:6px;border:1px solid rgba(0,255,136,0.16);
+  background:rgba(0,255,136,0.03);color:rgba(0,255,136,0.5);
+  font-family:'Share Tech Mono',monospace;font-size:9px;cursor:pointer;
+  text-align:center;transition:all 0.18s;letter-spacing:1px}
+.lb.on,.lb:active{background:rgba(0,255,136,0.14);border-color:var(--g);color:var(--g)}
+.cs{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+.sw{width:28px;height:28px;border-radius:50%;cursor:pointer;
+  border:2px solid transparent;transition:all 0.18s}
+.sw.on,.sw:active{transform:scale(1.2);border-color:#fff}
+.sb{width:100%;padding:11px;border-radius:9px;border:1px solid var(--g);
+  background:rgba(0,255,136,0.08);color:var(--g);font-family:'Share Tech Mono',monospace;
+  font-size:10px;letter-spacing:2px;cursor:pointer;margin-top:5px;transition:all 0.2s}
+.sb:active{background:rgba(0,255,136,0.22)}
+.sb.r{border-color:rgba(255,80,80,0.4);color:#ff6666;background:rgba(255,0,0,0.05)}
+.note{font-size:8px;color:rgba(0,255,136,0.3);margin-top:4px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- FULLSCREEN CAMERA -->
+<video id="vid" autoplay muted playsinline></video>
+<canvas id="cvs"></canvas>
+
+<!-- OVERLAYS -->
+<div id="vignette"></div>
+<div id="grid"></div>
+<div id="scan"></div>
+<div id="xhair"></div>
+<div class="co tl"></div><div class="co tr"></div>
+<div class="co bl"></div><div class="co br"></div>
+
+<!-- TOP BAR -->
+<div id="top">
+  <div id="logo">
+    <span class="name">GRX</span>
+    <span class="tag">AI SYSTEM</span>
+  </div>
+  <div id="top-right">
+    <div class="pill"><div class="d" id="aidot"></div><span id="aist">ON</span></div>
+    <div class="pill"><div class="d" id="ndot"></div><span id="nst">--</span></div>
+    <button id="s-btn" onclick="openS()">⚙</button>
+  </div>
+</div>
+
+<!-- DETECTION TAGS -->
+<div id="dtags"></div>
+
+<!-- USER BUBBLE -->
+<div id="user-bubble"><div class="ububble"><div class="utx" id="utx"></div></div></div>
+
+<!-- THINKING -->
+<div id="thinking"><div class="td"></div><div class="td"></div><div class="td"></div></div>
+
+<!-- AI BUBBLE -->
+<div id="ai-bubble">
+  <div class="bubble-inner">
+    <div class="bubble-name">▶ GRX AI</div>
+    <div class="bubble-text" id="ai-text"></div>
+  </div>
+</div>
+
+<!-- WAVEFORM + STATUS -->
+<div id="wave"></div>
+<div id="vstatus">🎙 TAP TO SPEAK</div>
+
+<!-- BOTTOM BAR -->
+<div id="bot">
+  <button id="cam-btn" onclick="toggleCam()">📷</button>
+  <button id="mic-btn" onclick="toggleMic()">🎙</button>
+  <div id="inp-wrap">
+    <input id="inp" type="text" placeholder="Type to GRX..." autocomplete="off"
+      onkeydown="if(event.key==='Enter')sendTxt()"/>
+    <button id="snd" onclick="sendTxt()">➤</button>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div id="smod">
+  <div id="sbox">
+    <div class="st">⚙ GRX SETTINGS</div>
+
+    <div class="sr">
+      <span class="sl">🔑 ANTHROPIC API KEY (Live AI)</span>
+      <input class="si" type="password" id="sk" placeholder="sk-ant-api03-..."/>
+      <div class="note">Free key: console.anthropic.com → API Keys<br>Live AI chat + object facts online only</div>
+    </div>
+
+    <div class="sr">
+      <span class="sl">🌐 LANGUAGE / BHASHA</span>
+      <div class="lg" id="lg"></div>
+    </div>
+
+    <div class="sr">
+      <span class="sl">🎨 UI COLOR</span>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <input type="color" id="sc" value="#00ff88" oninput="applyC(this.value)"
+          style="width:42px;height:34px;border-radius:7px;border:none;cursor:pointer;background:none"/>
+        <input class="si" id="shex" type="text" placeholder="#00ff88"
+          oninput="applyC(this.value)" style="flex:1"/>
+      </div>
+      <div class="cs" id="cs"></div>
+    </div>
+
+    <div class="sr">
+      <span class="sl">🔊 VOICE SPEED</span>
+      <input type="range" min="0.5" max="2" step="0.1" value="1" id="sspd"
+        oninput="G.spd=+this.value;document.getElementById('spdv').textContent=this.value+'x'"
+        style="width:100%;accentColor:var(--g);margin-bottom:3px"/>
+      <span id="spdv" style="font-size:9px;color:var(--g)">1x</span>
+    </div>
+
+    <div class="sr">
+      <span class="sl">🧠 OBJECT DETECTION (TF COCO-SSD)</span>
+      <button class="sb" id="vbtn" onclick="toggleVision()">▶ START DETECTION</button>
+      <div class="note">First load needs internet. Then works offline.</div>
+    </div>
+
+    <button class="sb" onclick="saveClose()">💾 SAVE & CLOSE</button>
+    <button class="sb r" onclick="document.getElementById('smod').classList.remove('open')">✕ CANCEL</button>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════
+   CONSTANTS
+══════════════════════════════════════════════ */
+const LANGS=[
+  {c:'en-IN',l:'English 🇮🇳'},{c:'en-US',l:'English 🇺🇸'},
+  {c:'hi-IN',l:'हिंदी 🇮🇳'},{c:'mr-IN',l:'मराठी 🇮🇳'},
+  {c:'ta-IN',l:'தமிழ் 🇮🇳'},{c:'te-IN',l:'తెలుగు 🇮🇳'},
+  {c:'bn-IN',l:'বাংলা 🇮🇳'},{c:'gu-IN',l:'ગુજરાતી 🇮🇳'},
+  {c:'ja-JP',l:'日本語 🇯🇵'},{c:'zh-CN',l:'中文 🇨🇳'},
+  {c:'ar-SA',l:'عربي 🇸🇦'},{c:'fr-FR',l:'Français 🇫🇷'},
+];
+const COLORS=['#00ff88','#39ff14','#00e5ff','#ff6b35','#cc88ff','#ffdd00','#ff4444','#ff69b4','#e0e0ff'];
+const ICONS={person:'👤',car:'🚗',bicycle:'🚲',motorcycle:'🏍',airplane:'✈️',bus:'🚌',
+  truck:'🚛',train:'🚂',boat:'⛵',bird:'🐦',cat:'🐱',dog:'🐶',horse:'🐴',
+  bottle:'🍾',cup:'☕',laptop:'💻','cell phone':'📱',book:'📚',clock:'⏰',
+  chair:'🪑',tv:'📺',keyboard:'⌨️',mouse:'🖱️',backpack:'🎒',umbrella:'☂️'};
+const LN={'en-IN':'English','en-US':'English','hi-IN':'Hindi','mr-IN':'Marathi',
+  'ta-IN':'Tamil','te-IN':'Telugu','bn-IN':'Bengali','gu-IN':'Gujarati',
+  'ja-JP':'Japanese','zh-CN':'Chinese','ar-SA':'Arabic','fr-FR':'French'};
+const GREET={'hi-IN':'नमस्ते! ','mr-IN':'नमस्कार! ','ta-IN':'வணக்கம்! ',
+  'te-IN':'నమస్కారం! ','bn-IN':'নমস্কার! ','gu-IN':'નમસ્તে! ',
+  'ja-JP':'こんにちは！','zh-CN':'你好！','ar-SA':'مرحباً! ','fr-FR':'Bonjour! '};
+const VSTAT={'hi-IN':'सुन रहा हूं...','mr-IN':'ऐकतोय...','ta-IN':'கேட்கிறேன்...',
+  'te-IN':'వింటున్నాను...','bn-IN':'শুনছি...','gu-IN':'સાંભળું છું...',
+  'ja-JP':'聞いています...','fr-FR':'J\'écoute...'};
+const OFFLINE={
+  'hello':['Hello! GRX AI ready.','Hello! GRX yahan hai.'],
+  'hi':['Hey! GRX here. How can I help?','Hey! Bolo, main sun raha hun.'],
+  'namaste':['Namaste! Main GRX hun.','Namaste! Kya help chahiye?'],
+  'kya hal':['Sab badhiya! Main poori tarah active hun.','GRX system optimal hai!'],
+  'kaun ho':['Main GRX AI hun — ek advanced intelligent system.'],
+  'who are you':['I am GRX — an advanced AI system.'],
+  'time':[()=>`Time: ${new Date().toLocaleTimeString()}`],
+  'date':[()=>`Date: ${new Date().toLocaleDateString()}`],
+  'camera':['Camera module ready. Tap 📷 to start.'],
+  'default':['Offline mode active. Add API key in ⚙ Settings for live AI.'],
+};
+
+/* ══════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════ */
+const G={
+  key:  localStorage.getItem('grx_k')||'',
+  lang: localStorage.getItem('grx_l')||'en-IN',
+  color:localStorage.getItem('grx_c')||'#00ff88',
+  spd:  parseFloat(localStorage.getItem('grx_s')||'1'),
+  online:navigator.onLine,
+  cam:false, stream:null,
+  vision:false, model:null, lastDets:'',
+  listen:false, speaking:false, recog:null,
+  bubTimer:null,
+};
+
+/* ══════════════════════════════════════════════
+   WAVEFORM
+══════════════════════════════════════════════ */
+const wEl=document.getElementById('wave');
+for(let i=0;i<24;i++){const b=document.createElement('div');b.className='wb';wEl.appendChild(b);}
+function wave(on){
+  wEl.classList.toggle('on',on);
+  document.querySelectorAll('.wb').forEach(b=>{
+    if(on){b.classList.add('a');b.style.height=(Math.random()*26+5)+'px';}
+    else{b.classList.remove('a');b.style.height='4px';}
+  });
+}
+setInterval(()=>{
+  if(G.listen||G.speaking)
+    document.querySelectorAll('.wb.a').forEach(b=>{b.style.height=(Math.random()*30+4)+'px';});
+},130);
+
+/* ══════════════════════════════════════════════
+   NETWORK
+══════════════════════════════════════════════ */
+function updateNet(){
+  G.online=navigator.onLine;
+  document.getElementById('ndot').className='d '+(G.online?'':'off');
+  document.getElementById('nst').textContent=G.online?'ONLINE':'OFFLINE';
+}
+window.addEventListener('online',updateNet);
+window.addEventListener('offline',updateNet);
+
+/* ══════════════════════════════════════════════
+   COLOR
+══════════════════════════════════════════════ */
+function applyC(hex){
+  if(!/^#[0-9A-Fa-f]{6}$/.test(hex))return;
+  G.color=hex;
+  const r=document.documentElement;
+  r.style.setProperty('--g',hex);
+  r.style.setProperty('--glow',`0 0 10px ${hex},0 0 22px ${hex}55`);
+  document.getElementById('sc').value=hex;
+  document.getElementById('shex').value=hex;
+  document.querySelectorAll('.sw').forEach(s=>s.classList.toggle('on',s.dataset.c===hex));
+}
+function buildCS(){
+  document.getElementById('cs').innerHTML=COLORS.map(c=>
+    `<div class="sw ${c===G.color?'on':''}" data-c="${c}" style="background:${c}" onclick="applyC('${c}')"></div>`
+  ).join('');
+}
+function buildLG(){
+  document.getElementById('lg').innerHTML=LANGS.map(l=>
+    `<button class="lb ${l.c===G.lang?'on':''}" onclick="selL('${l.c}',this)">${l.l}</button>`
+  ).join('');
+}
+function selL(c,btn){
+  G.lang=c;
+  document.querySelectorAll('.lb').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+/* ══════════════════════════════════════════════
+   SHOW AI BUBBLE  — on camera screen (green text)
+══════════════════════════════════════════════ */
+function showAI(text){
+  document.getElementById('ai-text').textContent=text;
+  const el=document.getElementById('ai-bubble');
+  el.classList.add('show');
+  clearTimeout(G.bubTimer);
+  G.bubTimer=setTimeout(()=>el.classList.remove('show'),8000);
+}
+function showUser(text){
+  document.getElementById('utx').textContent=text;
+  const el=document.getElementById('user-bubble');
+  el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'),5000);
+}
+function showThink(on){
+  document.getElementById('thinking').classList.toggle('show',on);
+  if(on)document.getElementById('ai-bubble').classList.remove('show');
+}
+
+/* ══════════════════════════════════════════════
+   CAMERA
+══════════════════════════════════════════════ */
+async function toggleCam(){
+  const btn=document.getElementById('cam-btn');
+  if(G.cam){
+    if(G.stream)G.stream.getTracks().forEach(t=>t.stop());
+    document.getElementById('vid').srcObject=null;
+    G.cam=false;btn.textContent='📷';btn.classList.remove('on');
+    showAI('Camera offline.');
+  } else {
+    try{
+      const s=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}},audio:false});
+      G.stream=s;
+      const v=document.getElementById('vid');
+      v.srcObject=s;G.cam=true;
+      btn.textContent='📷✓';btn.classList.add('on');
+      showAI((GREET[G.lang]||'')+'Camera online. Visual scanning active.');
+    }catch(e){
+      showAI('Camera permission denied. Please tap allow when browser asks.');
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════
+   VISION ENGINE — TensorFlow COCO-SSD
+══════════════════════════════════════════════ */
+async function toggleVision(){
+  const btn=document.getElementById('vbtn');
+  if(G.vision){
+    G.vision=false;
+    btn.textContent='▶ START DETECTION';
+    document.getElementById('dtags').innerHTML='';
+    document.getElementById('cvs').getContext('2d').clearRect(0,0,9999,9999);
+    return;
+  }
+  if(!G.cam){showAI('Start camera first!');return;}
+  btn.textContent='⏳ LOADING AI MODEL...';
+  try{
+    if(!G.model){
+      showAI('Loading TensorFlow COCO-SSD model...');
+      G.model=await cocoSsd.load();
+    }
+    G.vision=true;
+    btn.textContent='⬛ STOP DETECTION';
+    showAI('🧠 Vision AI online! Object detection active. Point camera at things.');
+    runV();
+  }catch(e){
+    btn.textContent='▶ START DETECTION';
+    showAI('Model load failed. Check internet for first load.');
+  }
+}
+
+async function runV(){
+  if(!G.vision||!G.model)return;
+  const vid=document.getElementById('vid');
+  const cvs=document.getElementById('cvs');
+  const ctx=cvs.getContext('2d');
+  cvs.width=vid.videoWidth||window.innerWidth;
+  cvs.height=vid.videoHeight||window.innerHeight;
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+
+  let preds=[];
+  try{preds=await G.model.detect(vid);}catch(e){}
+
+  // Draw boxes on camera
+  preds.forEach(p=>{
+    const[x,y,w,h]=p.bbox;
+    const conf=Math.round(p.score*100);
+    ctx.strokeStyle=G.color;ctx.lineWidth=2;
+    ctx.shadowBlur=10;ctx.shadowColor=G.color;
+    ctx.strokeRect(x,y,w,h);ctx.shadowBlur=0;
+    const lbl=`${p.class.toUpperCase()} ${conf}%`;
+    ctx.font='bold 11px monospace';
+    const tw=ctx.measureText(lbl).width;
+    ctx.fillStyle='rgba(0,0,0,0.82)';
+    ctx.fillRect(x,y>22?y-22:y,tw+10,19);
+    ctx.fillStyle=G.color;
+    ctx.shadowBlur=4;ctx.shadowColor=G.color;
+    ctx.fillText(lbl,x+5,y>22?y-6:y+13);
+    ctx.shadowBlur=0;
+  });
+
+  // Tags at top
+  document.getElementById('dtags').innerHTML=preds.slice(0,6).map(p=>
+    `<div class="dtag">${ICONS[p.class]||'📦'} ${p.class.toUpperCase()} ${Math.round(p.score*100)}%</div>`
+  ).join('');
+
+  // AI speak about new detection
+  const nd=preds.map(p=>p.class).join(',');
+  if(nd&&nd!==G.lastDets&&preds.length>0){
+    G.lastDets=nd;
+    const top=preds[0];
+    const info=await askAI(`Camera detected: "${top.class}". Give 1 fascinating fact in ${LN[G.lang]||'English'} language. Max 2 sentences, smart tone.`);
+    showAI(`${ICONS[top.class]||'📦'} ${top.class.toUpperCase()} — ${info}`);
+    speakIt(info);
+  }
+  setTimeout(()=>requestAnimationFrame(runV),300);
+}
+
+/* ══════════════════════════════════════════════
+   BRAIN ENGINE — Online + Offline
+══════════════════════════════════════════════ */
+async function askAI(prompt){
+  if(G.online&&G.key&&G.key.startsWith('sk-ant-')){
+    try{
+      const r=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','x-api-key':G.key,'anthropic-version':'2023-06-01'},
+        body:JSON.stringify({
+          model:'claude-haiku-4-5-20251001',max_tokens:250,
+          system:`You are GRX, a futuristic AI assistant. Always reply in ${LN[G.lang]||'English'} language. Be concise — max 2-3 sentences. Smart, helpful, direct tone.`,
+          messages:[{role:'user',content:prompt}]
+        })
+      });
+      const d=await r.json();
+      if(d.error)throw new Error(d.error.message);
+      return d.content?.[0]?.text||'No response.';
+    }catch(e){return offR(prompt);}
+  }
+  await new Promise(r=>setTimeout(r,300));
+  return offR(prompt);
+}
+
+function offR(p){
+  const l=p.toLowerCase();
+  for(const[k,v]of Object.entries(OFFLINE)){
+    if(l.includes(k)){const a=v;const r=a[Math.floor(Math.random()*a.length)];return typeof r==='function'?r():r;}
+  }
+  const d=OFFLINE.default;return typeof d[0]==='function'?d[0]():d[0];
+}
+
+/* ══════════════════════════════════════════════
+   VOICE ENGINE
+══════════════════════════════════════════════ */
+function toggleMic(){G.listen?stopMic():startMic();}
+
+function startMic(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){showAI('Speech recognition needs Chrome or Edge browser.');return;}
+  G.recog=new SR();
+  G.recog.lang=G.lang;G.recog.continuous=false;G.recog.interimResults=true;
+  G.recog.onstart=()=>{
+    G.listen=true;
+    document.getElementById('mic-btn').classList.add('on');
+    document.getElementById('vstatus').textContent='🎙 '+(VSTAT[G.lang]||'LISTENING...');
+    wave(true);
+  };
+  G.recog.onresult=async(e)=>{
+    const t=Array.from(e.results).map(r=>r[0].transcript).join('');
+    if(e.results[0].isFinal){
+      stopMic();
+      showUser(t);
+      showThink(true);
+      const reply=await askAI(t);
+      showThink(false);
+      showAI(reply);
+      speakIt(reply);
+    }
+  };
+  G.recog.onerror=()=>stopMic();
+  G.recog.onend=()=>stopMic();
+  G.recog.start();
+}
+
+function stopMic(){
+  try{if(G.recog)G.recog.stop();}catch(e){}
+  G.listen=false;
+  document.getElementById('mic-btn').classList.remove('on');
+  document.getElementById('vstatus').textContent='🎙 TAP TO SPEAK';
+  if(!G.speaking)wave(false);
+}
+
+function speakIt(text){
+  if(!window.speechSynthesis)return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=G.lang;u.rate=G.spd;u.pitch=0.88;
+  const vs=speechSynthesis.getVoices();
+  const v=vs.find(v=>v.lang===G.lang)||vs.find(v=>v.lang.startsWith(G.lang.split('-')[0]))||vs[0];
+  if(v)u.voice=v;
+  u.onstart=()=>{G.speaking=true;wave(true);};
+  u.onend=()=>{G.speaking=false;if(!G.listen)wave(false);};
+  speechSynthesis.speak(u);
+}
+
+/* ══════════════════════════════════════════════
+   TEXT INPUT
+══════════════════════════════════════════════ */
+async function sendTxt(){
+  const i=document.getElementById('inp');
+  const t=i.value.trim();if(!t)return;
+  i.value='';
+  showUser(t);
+  showThink(true);
+  const r=await askAI(t);
+  showThink(false);
+  showAI(r);
+  speakIt(r);
+}
+
+/* ══════════════════════════════════════════════
+   SETTINGS
+══════════════════════════════════════════════ */
+function openS(){
+  document.getElementById('sk').value=G.key||'';
+  document.getElementById('sspd').value=G.spd;
+  document.getElementById('spdv').textContent=G.spd+'x';
+  buildLG();buildCS();applyC(G.color);
+  document.getElementById('smod').classList.add('open');
+}
+function saveClose(){
+  const k=document.getElementById('sk').value.trim();
+  if(k){G.key=k;localStorage.setItem('grx_k',k);}
+  localStorage.setItem('grx_l',G.lang);
+  localStorage.setItem('grx_c',G.color);
+  localStorage.setItem('grx_s',G.spd);
+  document.getElementById('smod').classList.remove('open');
+  showAI(k?`✅ API key saved! Live ${LN[G.lang]||'English'} AI active.`:`Settings saved. Language: ${LN[G.lang]||'English'}.`);
+  speakIt(k?'API key saved. Live AI is now active.':'Settings saved.');
+}
+document.getElementById('smod').addEventListener('click',function(e){
+  if(e.target===this)this.classList.remove('open');
+});
+
+/* ══════════════════════════════════════════════
+   INIT
+══════════════════════════════════════════════ */
+function init(){
+  applyC(G.color);updateNet();
+  speechSynthesis?.getVoices();
+  document.getElementById('aidot').className='d';
+  document.getElementById('aist').textContent='ON';
+  // Auto start camera
+  setTimeout(toggleCam,500);
+  const msg=(GREET[G.lang]||'')+'GRX AI online! '+(G.key?'🟢 Live AI ready.':'Tap ⚙ to add API key for live AI.')+' Tap 🎙 to talk!';
+  setTimeout(()=>{showAI(msg);speakIt(msg);},800);
+}
+
+window.addEventListener('load',init);
+speechSynthesis?.addEventListener('voiceschanged',()=>{});
+</script>
+</body>
+</html>
